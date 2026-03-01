@@ -2266,5 +2266,17 @@
       }
     ],
     "requirement": 0
+  },
+  {
+    "label": "AgentForge AI",
+    "menu_id": "agentforge0",
+    "target": "agentforge",
+    "url": "/interface/agentforge/index.php",
+    "children": [],
+    "requirement": 0,
+    "acl_req": [
+      "admin",
+      "super"
+    ]
   }
 ]
