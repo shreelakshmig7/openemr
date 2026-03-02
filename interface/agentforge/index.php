@@ -1448,7 +1448,7 @@ require_once('../globals.php');
       const badgeTxt  = intentLabel(s.intent);
 
       return `<div class="history-item${isActive ? ' active' : ''}"
-                   onclick="resumeSession(${JSON.stringify(s.session_id)}, ${JSON.stringify(name)})">
+                   onclick="resumeSession(${escHtml(JSON.stringify(s.session_id))}, ${escHtml(JSON.stringify(name))})">
         <div class="history-date">${escHtml(dateStr)}</div>
         <span class="intent-badge ${badgeCls}">${escHtml(badgeTxt)}</span>
         <div class="history-patient">${escHtml(name)}${pid}</div>
