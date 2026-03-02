@@ -3790,7 +3790,7 @@ return [
      */
     "GET /api/patient/:puuid/allergy" => function ($puuid, HttpRestRequest $request) {
         RestConfig::request_authorization_check($request, "patients", "med");
-        $return = (new AllergyIntoleranceRestController())->getAll(['lists.pid' => $puuid]);
+        $return = (new AllergyIntoleranceRestController())->getAll(['puuid' => $puuid]);
 
         return $return;
     },
