@@ -86,6 +86,111 @@ require_once('../globals.php');
     #status-dot.online  { background: #68d391; }
     #status-dot.offline { background: #fc8181; }
 
+    /* ── Workspace: sidebar + main area ── */
+    #workspace {
+      flex: 1;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+    }
+
+    /* ── Audit history sidebar ── */
+    #history-sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      background: #fff;
+      border-right: 1px solid #e2e8f0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #history-header {
+      padding: 12px 14px 8px;
+      border-bottom: 1px solid #e2e8f0;
+      flex-shrink: 0;
+    }
+    #history-header h3 {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #718096;
+      margin-bottom: 2px;
+    }
+    #history-header p {
+      font-size: 10px;
+      color: #a0aec0;
+    }
+    #history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0;
+    }
+    .history-item {
+      padding: 9px 14px;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .history-item:hover { background: #f7fafc; }
+    .history-item.active {
+      background: #ebf4ff;
+      border-left-color: #1a56db;
+    }
+    .history-date {
+      font-size: 10px;
+      color: #a0aec0;
+      margin-bottom: 3px;
+    }
+    .history-patient {
+      font-size: 12px;
+      font-weight: 600;
+      color: #1a202c;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .history-pid {
+      font-size: 10px;
+      color: #718096;
+      margin-bottom: 4px;
+    }
+    .history-summary {
+      font-size: 11px;
+      color: #4a5568;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .intent-badge {
+      display: inline-block;
+      border-radius: 10px;
+      padding: 2px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      margin-bottom: 3px;
+    }
+    .intent-MEDICATIONS    { background: #ebf4ff; color: #1a56db; }
+    .intent-INTERACTIONS   { background: #fffbeb; color: #744210; }
+    .intent-SAFETY_CHECK   { background: #fff5f5; color: #c53030; }
+    .intent-ALLERGIES      { background: #faf5ff; color: #6b46c1; }
+    .intent-GENERAL_CLINICAL { background: #e6fffa; color: #234e52; }
+    .intent-sync           { background: #f0fff4; color: #276749; }
+    .intent-default        { background: #f7fafc; color: #4a5568; }
+    #history-empty {
+      padding: 24px 14px;
+      text-align: center;
+      color: #a0aec0;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    #history-loading {
+      padding: 16px 14px;
+      text-align: center;
+      color: #a0aec0;
+      font-size: 11px;
+    }
+
     /* ── Main split area ── */
     #main-area {
       flex: 1;
@@ -699,7 +804,21 @@ require_once('../globals.php');
   </div>
 </div>
 
-<!-- ── Main area ────────────────────────────────────────────────────────────── -->
+<!-- ── Workspace: sidebar + main area ──────────────────────────────────────── -->
+<div id="workspace">
+
+<!-- ── Audit history sidebar ── -->
+<div id="history-sidebar">
+  <div id="history-header">
+    <h3>System Audit History</h3>
+    <p>Agent interactions &middot; all patients</p>
+  </div>
+  <div id="history-list">
+    <div id="history-loading">Loading&hellip;</div>
+  </div>
+</div>
+
+<!-- ── Main area ── -->
 <div id="main-area">
 
   <div id="chat-pane">
@@ -740,11 +859,13 @@ require_once('../globals.php');
     </div>
   </div>
 
-</div>
+</div><!-- #main-area -->
+
+</div><!-- #workspace -->
 
 <script>
   // ── API base — all requests go to the AgentForge FastAPI backend ─────────────
-  const API_BASE = 'http://127.0.0.1:8000';
+  const API_BASE = 'https://web-production-5d03.up.railway.app';
 
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -770,6 +891,9 @@ require_once('../globals.php');
   let threadId = generateThreadId();
 
   function handleNewCase() {
+    // Refresh the sidebar first so the previous session is visually "locked in"
+    // before we overwrite threadId and clear the chat area.
+    loadHistory();
     threadId = generateThreadId();
     attachedPdfPath = null;
     pdfDoc          = null;
@@ -1032,6 +1156,11 @@ require_once('../globals.php');
 
   // ── Send ─────────────────────────────────────────────────────────────────────
 
+  // Tracks the user message currently in-flight to /ask. If the tab is closed
+  // before the response arrives, pagehide will beacon this to /save-message so
+  // the question is not silently lost from the session transcript.
+  let _pendingBeaconData = null;
+
   async function sendMessage() {
     const text = input.value.trim();
     if (!text) return;
@@ -1043,6 +1172,10 @@ require_once('../globals.php');
 
     appendUserMessage(pdfUsed ? `${text}\n\u{1F4CE} ${pdfUsed.split('/').pop()}` : text);
     appendTyping();
+
+    // Mark this question as pending so pagehide can beacon it if the tab closes
+    // before the /ask response comes back.
+    _pendingBeaconData = { session_id: threadId, content: text, role: 'user' };
 
     try {
       const body = { question: text, thread_id: threadId };
@@ -1067,6 +1200,9 @@ require_once('../globals.php');
       removeTyping();
       appendErrorMessage('Could not reach the AgentForge server (localhost:8000). Ensure it is running.');
     } finally {
+      // Request completed (success or error) — clear the pending beacon so a
+      // normal tab close doesn't duplicate the message.
+      _pendingBeaconData = null;
       sendBtn.disabled = false;
       input.focus();
     }
@@ -1158,7 +1294,7 @@ require_once('../globals.php');
     const failed  = data.failed  || (total - passed);
     const rate    = data.pass_rate != null ? data.pass_rate : (total > 0 ? passed / total : 0);
     const ts      = data.timestamp
-      ? new Date(data.timestamp.replace(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/, '$1-$2-$3T$4:$5:$6')).toLocaleString()
+      ? new Date(data.timestamp.replace(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/, '$1-$2-$3T$4:$5:$6Z')).toLocaleString()
       : '\u2014';
 
     document.getElementById('card-total-val').textContent  = total;
@@ -1248,6 +1384,201 @@ require_once('../globals.php');
     }
     renderEvalTable(rows);
   }
+
+  // ── Audit history sidebar ─────────────────────────────────────────────────
+
+  const INTENT_LABELS = {
+    MEDICATIONS:      'Meds Review',
+    INTERACTIONS:     'Drug Interaction',
+    SAFETY_CHECK:     'Safety Check',
+    ALLERGIES:        'Allergy Check',
+    GENERAL_CLINICAL: 'Clinical Query',
+    sync:             'EHR Sync',
+  };
+
+  function intentLabel(intent) {
+    return INTENT_LABELS[intent] || (intent ? intent.replace(/_/g, ' ') : 'Query');
+  }
+
+  function intentClass(intent) {
+    if (!intent) return 'intent-default';
+    if (INTENT_LABELS[intent]) return 'intent-' + intent;
+    return 'intent-default';
+  }
+
+  function formatHistoryDate(isoStr) {
+    if (!isoStr) return '';
+    try {
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return isoStr.slice(0, 10);
+      return d.toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+    } catch (e) { return isoStr.slice(0, 10); }
+  }
+
+  let _historySessions = [];
+
+  async function loadHistory() {
+    try {
+      const res  = await fetch(API_BASE + '/history?limit=30');
+      if (!res.ok) { renderHistoryEmpty(); return; }
+      const data = await res.json();
+      _historySessions = Array.isArray(data) ? data : [];
+      renderHistoryList(_historySessions);
+    } catch (e) {
+      renderHistoryEmpty();
+    }
+  }
+
+  function renderHistoryEmpty() {
+    document.getElementById('history-list').innerHTML =
+      '<div id="history-empty">No sessions yet.<br>Ask a question to start.</div>';
+  }
+
+  function renderHistoryList(sessions) {
+    const list = document.getElementById('history-list');
+    if (!sessions || sessions.length === 0) { renderHistoryEmpty(); return; }
+
+    list.innerHTML = sessions.map(s => {
+      const isActive  = s.session_id === threadId;
+      const name      = s.patient_name || 'Unknown patient';
+      const pid       = s.patient_pid  ? ' (PID: ' + escHtml(s.patient_pid) + ')' : '';
+      const summary   = s.query_summary || '';
+      const dateStr   = formatHistoryDate(s.updated_at);
+      const badgeCls  = intentClass(s.intent);
+      const badgeTxt  = intentLabel(s.intent);
+
+      return `<div class="history-item${isActive ? ' active' : ''}"
+                   onclick="resumeSession(${JSON.stringify(s.session_id)}, ${JSON.stringify(name)})">
+        <div class="history-date">${escHtml(dateStr)}</div>
+        <span class="intent-badge ${badgeCls}">${escHtml(badgeTxt)}</span>
+        <div class="history-patient">${escHtml(name)}${pid}</div>
+        <div class="history-summary">${escHtml(summary)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  async function resumeSession(sessionId, patientName) {
+    // Switch active thread — follow-up messages continue this LangGraph thread.
+    threadId = sessionId;
+    renderHistoryList(_historySessions);
+
+    // Reset PDF and PDF pane state.
+    attachedPdfPath = null;
+    pdfBadge.style.display = 'none';
+    pdfBadgeName.textContent = '';
+    closePdfPane();
+
+    // Show loading indicator while fetching transcript.
+    chat.innerHTML = `
+      <div style="text-align:center;padding:48px 24px;color:#a0aec0;font-size:13px;line-height:1.8;">
+        <div style="font-size:22px;margin-bottom:10px;">&#x23F3;</div>
+        Loading session history&hellip;
+      </div>`;
+
+    try {
+      const res = await fetch(API_BASE + '/history/' + encodeURIComponent(sessionId) + '/messages');
+
+      if (!res.ok) { _showResumeWelcome(patientName); return; }
+
+      const messages = await res.json();
+
+      if (!messages || messages.length === 0) { _showResumeWelcome(patientName); return; }
+
+      // Replay transcript — clear first, then append each turn in order.
+      chat.innerHTML = '';
+      let lastPdfPath = '';
+      let lastPdfName = '';
+
+      // Suppress PDF pane auto-open during replay — only open on final message.
+      const _savedOpen = openPdfPane;
+      openPdfPane = () => {};
+
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        const isLast = (i === messages.length - 1);
+
+        if (msg.role === 'user') {
+          // Show user message — include PDF badge text if a PDF was attached.
+          const label = msg.pdf_path
+            ? msg.content + '\n\u{1F4CE} ' + msg.pdf_path.split('/').pop()
+            : msg.content;
+          appendUserMessage(label);
+          if (msg.pdf_path) {
+            lastPdfPath = msg.pdf_path;
+            lastPdfName = msg.pdf_path.split('/').pop();
+          }
+        } else if (msg.role === 'agent') {
+          const meta = msg.metadata || {};
+          // Re-enable PDF pane auto-open for the final message only.
+          if (isLast) openPdfPane = _savedOpen;
+          appendAgentMessage({
+            answer:           msg.content,
+            escalate:         meta.escalate         || false,
+            confidence:       meta.confidence        || 0,
+            disclaimer:       meta.disclaimer        || '',
+            tool_trace:       meta.tool_trace        || [],
+            denial_risk:      meta.denial_risk       || {},
+            citation_anchors: meta.citation_anchors  || [],
+          });
+        }
+      }
+
+      // Restore PDF — only reuse the path if it is a relative server path
+      // (e.g. "uploads/foo.pdf").  Absolute paths from previous environments
+      // (e.g. Docker-style "/app/uploads/foo.pdf") are stale and cannot be
+      // resolved by the server, so we silently discard them here — the user
+      // will be prompted to re-upload if they want to use the same document.
+      if (lastPdfPath && !lastPdfPath.startsWith('/')) {
+        attachedPdfPath = lastPdfPath;
+        pdfBadgeName.textContent = lastPdfName;
+        pdfBadge.style.display = 'flex';
+      }
+
+      scrollBottom();
+      input.focus();
+
+    } catch (e) {
+      _showResumeWelcome(patientName);
+    }
+  }
+
+  function _showResumeWelcome(patientName) {
+    chat.innerHTML = `
+      <div class="welcome">
+        <h2>Resuming session &mdash; ${escHtml(patientName || 'patient')}</h2>
+        <p>Your prior conversation context is preserved &mdash; ask a follow-up question or start a new case.</p>
+        <div class="chips">
+          <button class="chip" onclick="sendChip(this)">&#x1F48A; What medications is ${escHtml(patientName || 'this patient')} on?</button>
+          <button class="chip" onclick="sendChip(this)">&#x26A0;&#xFE0F; Any drug interactions for ${escHtml(patientName || 'this patient')}?</button>
+          <button class="chip" onclick="sendChip(this)">&#x1FA7A; Any known allergies?</button>
+        </div>
+      </div>`;
+  }
+
+  // Refresh sidebar after every agent response.
+  const _origAppendAgent = appendAgentMessage;
+  appendAgentMessage = function(data) {
+    _origAppendAgent(data);
+    loadHistory();
+  };
+
+  // Initial load.
+  loadHistory();
+
+  // ── Tab-close / navigation-away safety net ────────────────────────────────
+  // pagehide fires reliably on tab close, window close, and navigation away
+  // (unlike beforeunload which modern browsers restrict). If a /ask request
+  // is still in-flight when the tab closes, beacon the user's question to
+  // /save-message so it lands in the session transcript. fetch() is cancelled
+  // on unload, so sendBeacon is the only API that works here.
+  window.addEventListener('pagehide', function () {
+    if (!_pendingBeaconData) return;
+    const blob = new Blob(
+      [JSON.stringify(_pendingBeaconData)],
+      { type: 'application/json' }
+    );
+    navigator.sendBeacon(API_BASE + '/save-message', blob);
+  });
 </script>
 </body>
 </html>

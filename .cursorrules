@@ -1,0 +1,1 @@
+Project: AgentForge RCM Agent. Architecture: Multi-agent LangGraph with SQLite staging. Integration: OpenEMR FHIR R4 (Docker). Standards: Pydantic for validation, httpx for async API, LOINC for clinical coding. Environment: Target OpenEMR at https://localhost:9300 (ignore SSL).

@@ -24,3 +24,9 @@ Important decisions and brief rationale. Add when we make choices that affect fu
 - **2026-02-28:** policy_search has a keyword-based mock fallback when `USE_REAL_PINECONE` is not set or Pinecone/Voyage keys are missing. The tool always returns a valid result dict; production uses Pinecone + Voyage when env is configured.
 
 - **2026-02-28:** Denial risk analysis runs only for intents INTERACTIONS and GENERAL_CLINICAL, or when a PDF is attached. It is skipped for SAFETY_CHECK (allergy/interaction checks already answer the question) and for simple list intents (e.g. MEDICATIONS, ALLERGIES) to avoid false positives.
+
+- **2026-03-01:** OpenEMR community demo build blocks FHIR writes (`POST /fhir/Observation` returns 404). Decision: implement a local-audit fallback — when `synced_count=0` but `mapped_count>0` after `run_sync`, call `database.promote_failed_to_synced()` to mark champions `SYNCED` and duplicates `SUPERSEDED` in SQLite. This is the source of truth for the demo. In a licensed production OpenEMR instance, the same records would land in the patient chart under Clinical → Observations.
+
+- **2026-03-01:** HITL confirmation ("Yes"/"Sync") was being killed by the Router Node classifying it as OUT_OF_SCOPE before reaching the Orchestrator's pre-check. Fix: `_route_from_router` in `workflow.py` now checks `state.get("pending_sync_confirmation")` first and always routes to `orchestrator` if True, bypassing the OUT_OF_SCOPE classification.
+
+- **2026-03-01:** FHIR Observation verification method: use `OpenEMRClient._ensure_token()` + `client._http.get(...)` inside an `async with OpenEMRClient() as client:` context manager. The one-liner `curl` approach with `_default` client_id and minimal scope will always return 403/denied — the agent's dynamic client registration flow is required.

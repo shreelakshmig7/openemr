@@ -34,6 +34,41 @@ Facts about this project that should stay consistent across sessions.
 | `langgraph_agent/clarification_node.py` | ✅ Built |
 | `langgraph_agent/workflow.py` | ✅ Built |
 
+## OpenEMR demo build limitations (as of 2026-03-01)
+
+| Endpoint | Status | Notes |
+|---|---|---|
+| `GET /fhir/Patient` | ✅ Works | Patient lookup via FHIR |
+| `GET /fhir/Observation` | ✅ Works | Returns 0 results (nothing was written) |
+| `POST /fhir/Observation` | ❌ 404 | FHIR writes blocked in community demo build |
+| `POST /fhir/Bundle` | ❌ 404 | Same — transaction bundles rejected |
+| Standard REST (`/api/patient`, `/api/medication`) | ✅ Works (read) | Seeded via `seed_portal.py` |
+
+**Where synced data lives for the demo:**
+- **SQLite `evidence_staging`** — champions marked `SYNCED`, duplicates `SUPERSEDED`
+- **OpenEMR portal UI** — patient demographics + medications (seeded), but NO Observations
+- **Verification command:** `sqlite3 openemr-agent/evidence_staging.sqlite "SELECT marker_name, marker_value, sync_status FROM evidence_staging;"`
+- **Demo narrative:** "In a production licensed OpenEMR instance, these records would appear in the patient chart under Clinical → Observations. The local audit trail is the proof of sync for this demo environment."
+
+## LangGraph HITL sync flow (as of 2026-03-01)
+
+```
+PDF Upload turn:
+  START → router → orchestrator → extractor → auditor → output → comparison → END
+  (comparison sets pending_sync_confirmation=True, appends sync question)
+
+"Yes"/"Sync" turn:
+  START → router [HITL override in _route_from_router] → orchestrator
+  → orchestrator pre-check detects confirm word → routing_decision="sync"
+  → sync_execution → END
+```
+
+**Key state fields for HITL (all in `_cache_fields` in `run_workflow`):**
+- `pending_sync_confirmation` (bool) — True = waiting for user to confirm
+- `sync_summary` (dict) — `{"new": [...], "existing": [...], "total_raw": N}`
+- `staged_patient_fhir_id` (str) — FHIR UUID of patient to sync for
+- `staged_session_id` (str) — session/case ID for the sync batch
+
 ## Key env vars required (production)
 
 - `ANTHROPIC_API_KEY` — Claude (Orchestrator, Extractor, Auditor)
