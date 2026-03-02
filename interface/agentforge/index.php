@@ -965,7 +965,7 @@ require_once('../globals.php');
 
   function handleNewCase() {
     // Refresh the sidebar first so the previous session is visually "locked in"
-    // before we overwrite threadId.
+    // before we overwrite threadId and reset the chat area.
     loadHistory();
     threadId = generateThreadId();
     attachedPdfPath = null;
@@ -975,12 +975,18 @@ require_once('../globals.php');
     pdfBadge.style.display = 'none';
     pdfBadgeName.textContent = '';
     closePdfPane();
-    // Insert a session-break divider without clearing existing history
-    const divider = document.createElement('div');
-    divider.className = 'new-case-divider';
-    divider.innerHTML = `<span>New Case &middot; ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>`;
-    chat.appendChild(divider);
-    chat.scrollTop = chat.scrollHeight;
+    chat.innerHTML = `
+      <div class="welcome">
+        <h2>What can I help you with?</h2>
+        <p>Ask about patient medications, drug interactions, or allergy conflicts. Attach a clinical PDF to unlock inline citations.</p>
+        <div class="chips">
+          <button class="chip" onclick="sendChip(this)">&#x1F48A; What medications is John Smith on?</button>
+          <button class="chip" onclick="sendChip(this)">&#x26A0;&#xFE0F; Check drug interactions for Mary Johnson</button>
+          <button class="chip" onclick="sendChip(this)">&#x1F6A8; Is it safe to give Robert Davis Aspirin?</button>
+          <button class="chip" onclick="sendChip(this)">&#x1FA7A; Does John Smith have any known allergies?</button>
+          <button class="chip" onclick="sendChip(this)">&#x1F6A8; Is it safe to give Emily Rodriguez Amoxicillin?</button>
+        </div>
+      </div>`;
     console.info('[HIPAA] Session purged. New thread: ' + threadId);
   }
 
