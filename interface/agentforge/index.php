@@ -390,6 +390,34 @@ require_once('../globals.php');
     .disclaimer { font-size: 11px; color: #a0aec0; margin-top: 6px; padding: 0 4px; line-height: 1.4; }
     .confidence { font-size: 11px; color: #718096; margin-top: 4px; padding: 0 4px; }
 
+    /* ── New-case session divider ── */
+    .new-case-divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      align-self: stretch;
+      color: #718096;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin: 4px 0;
+    }
+    .new-case-divider::before,
+    .new-case-divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #e2e8f0;
+    }
+    .new-case-divider span {
+      background: #f7fafc;
+      padding: 2px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      white-space: nowrap;
+    }
+
     .citation-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .citation-anchor-btn {
       background: #ebf4ff;
@@ -406,6 +434,49 @@ require_once('../globals.php');
       gap: 4px;
     }
     .citation-anchor-btn:hover { background: #bee3f8; transform: translateY(-1px); }
+
+    /* ── PII / Privacy verification (redacted query preview) ── */
+    .privacy-preview {
+      margin-top: 8px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .privacy-preview summary {
+      background: #f7fafc;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #4a5568;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .privacy-preview summary::-webkit-details-marker { display: none; }
+    .privacy-preview summary::before {
+      content: '\25B6';
+      font-size: 9px;
+      transition: transform 0.15s;
+    }
+    .privacy-preview[open] summary::before { transform: rotate(90deg); }
+    .privacy-preview .privacy-body {
+      padding: 10px 12px;
+      font-size: 12px;
+      color: #4a5568;
+      background: #fff;
+      border-top: 1px solid #e2e8f0;
+      font-family: "SF Mono", "Fira Code", monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .privacy-preview .privacy-note {
+      font-size: 11px;
+      color: #718096;
+      margin-top: 4px;
+    }
 
     /* ── Tool trace ── */
     .trace-container { margin-top: 8px; }
@@ -894,7 +965,7 @@ require_once('../globals.php');
 
   function handleNewCase() {
     // Refresh the sidebar first so the previous session is visually "locked in"
-    // before we overwrite threadId and clear the chat area.
+    // before we overwrite threadId.
     loadHistory();
     threadId = generateThreadId();
     attachedPdfPath = null;
@@ -904,18 +975,12 @@ require_once('../globals.php');
     pdfBadge.style.display = 'none';
     pdfBadgeName.textContent = '';
     closePdfPane();
-    chat.innerHTML = `
-      <div class="welcome">
-        <h2>What can I help you with?</h2>
-        <p>Ask about patient medications, drug interactions, or allergy conflicts. Attach a clinical PDF to unlock inline citations.</p>
-        <div class="chips">
-          <button class="chip" onclick="sendChip(this)">&#x1F48A; What medications is John Smith on?</button>
-          <button class="chip" onclick="sendChip(this)">&#x26A0;&#xFE0F; Check drug interactions for Mary Johnson</button>
-          <button class="chip" onclick="sendChip(this)">&#x1F6A8; Is it safe to give Robert Davis Aspirin?</button>
-          <button class="chip" onclick="sendChip(this)">&#x1FA7A; Does John Smith have any known allergies?</button>
-          <button class="chip" onclick="sendChip(this)">&#x1F6A8; Is it safe to give Emily Rodriguez Amoxicillin?</button>
-        </div>
-      </div>`;
+    // Insert a session-break divider without clearing existing history
+    const divider = document.createElement('div');
+    divider.className = 'new-case-divider';
+    divider.innerHTML = `<span>New Case &middot; ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>`;
+    chat.appendChild(divider);
+    chat.scrollTop = chat.scrollHeight;
     console.info('[HIPAA] Session purged. New thread: ' + threadId);
   }
 
@@ -938,6 +1003,57 @@ require_once('../globals.php');
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
+
+  // ── Restore last session on page load ────────────────────────────────────
+  async function restoreLastSession() {
+    try {
+      const histRes = await fetch(API_BASE + '/history?limit=1');
+      if (!histRes.ok) return;
+      const sessions = await histRes.json();
+      if (!sessions || sessions.length === 0) return;
+
+      const lastSession = sessions[0];
+      const sid = lastSession.session_id;
+
+      const msgRes = await fetch(API_BASE + '/history/' + encodeURIComponent(sid) + '/messages');
+      if (!msgRes.ok) return;
+      const messages = await msgRes.json();
+      if (!messages || messages.length === 0) return;
+
+      // Reuse the persisted session so follow-up questions work
+      threadId = sid;
+
+      // Remove the default welcome card before rendering history
+      const welcome = chat.querySelector('.welcome');
+      if (welcome) welcome.remove();
+
+      messages.forEach(msg => {
+        if (msg.role === 'user') {
+          appendUserMessage(msg.content || '');
+        } else {
+          const meta = msg.metadata || {};
+          appendAgentMessage({
+            answer:                 msg.content || '',
+            confidence:             meta.confidence  ?? 0,
+            escalate:               meta.escalate    ?? false,
+            disclaimer:             meta.disclaimer  || '',
+            tool_trace:             meta.tool_trace  || [],
+            denial_risk:            meta.denial_risk || {},
+            citation_anchors:       meta.citation_anchors || [],
+            query_redacted_preview: null,
+            session_id:             sid,
+            thread_id:              sid,
+          });
+        }
+      });
+
+      chat.scrollTop = chat.scrollHeight;
+    } catch (_) {
+      // Silently ignore — a fresh session is still usable
+    }
+  }
+
+  restoreLastSession();
 
   // ── PDF viewer ───────────────────────────────────────────────────────────────
 
@@ -1136,10 +1252,10 @@ require_once('../globals.php');
 
   function buildCitationStripHtml(anchors) {
     if (!anchors || anchors.length === 0) return '';
-    const btns = anchors.map((a, i) =>
-      `<button class="citation-anchor-btn" onclick="handleCitationClick(${i})">&#x1F4C4; ${escHtml(a.label)}</button>`
-    ).join('');
-    return `<div class="citation-strip">${btns}</div>`;
+    const a = anchors[0];
+    return `<div class="citation-strip">
+      <button class="citation-anchor-btn" onclick="handleCitationClick(0)">&#x1F4C4; ${escHtml(a.label)}</button>
+    </div>`;
   }
 
   let _lastAnchors = [];
@@ -1163,13 +1279,25 @@ require_once('../globals.php');
       ? '<div class="escalation-banner">&#x1F534; Physician Review Recommended &mdash; Confidence below threshold.</div>'
       : '';
 
-    const confidencePct = Math.round((data.confidence || 0) * 100);
+    const confidencePct  = Math.round((data.confidence || 0) * 100);
+    const citationHtml   = buildCitationStripHtml(anchors);
+    const redactedPreview = (data.query_redacted_preview != null && String(data.query_redacted_preview).trim() !== '')
+      ? data.query_redacted_preview
+      : 'Redaction preview not available for this message.';
+    const privacyHtml = `<div class="privacy-preview">
+      <details>
+        <summary>&#x1F512; Privacy &mdash; Your message was redacted before processing</summary>
+        <div class="privacy-body">${escHtml(redactedPreview)}</div>
+        <div class="privacy-note">PII (names, SSN, phone, email, MRN, etc.) is replaced with placeholders before being sent to the agent.</div>
+      </details>
+    </div>`;
 
     div.innerHTML = `
       <div class="bubble">${escHtml(data.answer)}</div>
       ${escalationHtml}
       ${buildDenialBadgeHtml(data.denial_risk)}
-      ${buildCitationStripHtml(anchors)}
+      ${citationHtml}
+      ${privacyHtml}
       <div class="confidence">Confidence: ${confidencePct}%</div>
       <div class="disclaimer">${escHtml(data.disclaimer || '')}</div>
       ${buildTraceHtml(data.tool_trace)}
