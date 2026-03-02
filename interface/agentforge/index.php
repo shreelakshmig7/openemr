@@ -1458,6 +1458,14 @@ require_once('../globals.php');
   }
 
   async function resumeSession(sessionId, patientName) {
+    // If this session is already active and the chat area has live messages,
+    // do nothing — the transcript is already visible and reloading would wipe
+    // the in-progress conversation and replace it with whatever Railway has
+    // in its DB (which may be incomplete if the server restarted mid-session).
+    if (sessionId === threadId && chat.querySelector('.msg')) {
+      return;
+    }
+
     // Switch active thread — follow-up messages continue this LangGraph thread.
     threadId = sessionId;
     renderHistoryList(_historySessions);
