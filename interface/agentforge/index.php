@@ -1489,13 +1489,19 @@ require_once('../globals.php');
       let lastPdfPath = '';
       let lastPdfName = '';
 
-      // Suppress PDF pane auto-open during replay — only open on final message.
+      // Detect whether this session has any agent turns saved.
+      // Sessions created before the NameError fix was deployed will have user
+      // turns only. We still render those so the thread context is visible,
+      // and show a notice so the user knows why agent replies are missing.
+      const hasAgentTurns = messages.some(m => m.role === 'agent');
+
+      // Suppress PDF pane auto-open during replay — restore unconditionally
+      // after the loop so the PDF viewer is never left permanently broken.
       const _savedOpen = openPdfPane;
       openPdfPane = () => {};
 
       for (let i = 0; i < messages.length; i++) {
         const msg = messages[i];
-        const isLast = (i === messages.length - 1);
 
         if (msg.role === 'user') {
           // Show user message — include PDF badge text if a PDF was attached.
@@ -1509,8 +1515,6 @@ require_once('../globals.php');
           }
         } else if (msg.role === 'agent') {
           const meta = msg.metadata || {};
-          // Re-enable PDF pane auto-open for the final message only.
-          if (isLast) openPdfPane = _savedOpen;
           appendAgentMessage({
             answer:           msg.content,
             escalate:         meta.escalate         || false,
@@ -1521,6 +1525,24 @@ require_once('../globals.php');
             citation_anchors: meta.citation_anchors  || [],
           });
         }
+      }
+
+      // Always restore openPdfPane — regardless of whether an agent message
+      // was the last item in the loop. Previously this was inside the agent
+      // branch with isLast, which permanently broke the PDF viewer whenever
+      // the transcript ended with a user turn (no agent turns saved).
+      openPdfPane = _savedOpen;
+
+      // If no agent turns were found, append a notice so the user understands
+      // why only their questions are visible, and can continue the conversation.
+      if (!hasAgentTurns) {
+        const notice = document.createElement('div');
+        notice.className = 'msg agent';
+        notice.innerHTML = `<div class="bubble" style="border-color:#e2a03f;background:#fffbf0;color:#7d5a1e;font-size:12px;">
+          &#x26A0;&#xFE0F; Agent responses from this session were not saved due to a server issue.
+          Your conversation context is preserved &mdash; ask a follow-up question to continue.
+        </div>`;
+        chat.appendChild(notice);
       }
 
       // Restore PDF — only reuse the path if it is a relative server path
