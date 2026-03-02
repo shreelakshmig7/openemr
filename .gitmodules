@@ -1,3 +1,8 @@
+[submodule "openemr-agent"]
+	path = openemr-agent
+	url = https://github.com/shreelakshmig7/openemr-agent.git
+	branch = main
+
 [submodule "ci/inferno/onc-certification-g10-test-kit"]
 	path = ci/inferno/onc-certification-g10-test-kit
 	url = https://github.com/openemr/onc-certification-g10-test-kit
