@@ -454,7 +454,9 @@ require_once('../globals.php');
     }
 
     /* ── Typing indicator ── */
-    .typing .bubble { display: flex; gap: 4px; align-items: center; padding: 14px 18px; }
+    .typing .bubble { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; padding: 14px 18px; }
+    .typing .bubble .typing-dots { display: flex; gap: 4px; align-items: center; }
+    .typing .bubble .stream-status { font-size: 13px; color: #4a5568; margin-top: 2px; }
     .dot { width: 7px; height: 7px; background: #a0aec0; border-radius: 50%; animation: bounce 1.2s infinite; }
     .dot:nth-child(2) { animation-delay: 0.2s; }
     .dot:nth-child(3) { animation-delay: 0.4s; }
@@ -1060,7 +1062,7 @@ require_once('../globals.php');
     const div = document.createElement('div');
     div.className = 'msg agent typing';
     div.id = 'typing-indicator';
-    div.innerHTML = '<div class="bubble"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+    div.innerHTML = '<div class="bubble"><div class="typing-dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div><div class="stream-status" id="stream-status"></div></div>';
     chat.appendChild(div);
     scrollBottom();
     return div;
@@ -1069,6 +1071,38 @@ require_once('../globals.php');
   function removeTyping() {
     const el = document.getElementById('typing-indicator');
     if (el) el.remove();
+  }
+
+  function updateTypingProgress(summary) {
+    const el = document.getElementById('stream-status');
+    if (el && summary) el.textContent = summary;
+  }
+
+  function parseSSEStream(reader, onEvent) {
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let currentEvent = {};
+    function flushEvent() {
+      if (currentEvent.type && currentEvent.data != null) {
+        onEvent(currentEvent.type, currentEvent.data);
+      }
+      currentEvent = {};
+    }
+    return (function read() {
+      return reader.read().then(function processChunk({ done, value }) {
+        if (value) buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = done ? '' : (lines.pop() || '');
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.startsWith('event:')) currentEvent.type = line.slice(6).trim();
+          else if (line.startsWith('data:')) currentEvent.data = line.slice(5).trim();
+          else if (line === '') flushEvent();
+        }
+        if (done) flushEvent();
+        if (!done) return read();
+      });
+    })();
   }
 
   function buildTraceHtml(toolTrace) {
@@ -1181,24 +1215,54 @@ require_once('../globals.php');
       const body = { question: text, thread_id: threadId };
       if (pdfUsed) body.pdf_source_file = pdfUsed;
 
-      const res = await fetch(API_BASE + '/ask', {
+      const res = await fetch(API_BASE + '/ask/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
 
-      removeTyping();
-
       if (!res.ok) {
+        removeTyping();
         appendErrorMessage('The AgentForge server returned an error. Please try again.');
       } else {
-        const data = await res.json();
-        threadId = data.thread_id || data.session_id || threadId;
-        appendAgentMessage(data);
+        const reader = res.body.getReader();
+        let gotDoneOrError = false;
+        const onEvent = function (eventType, dataStr) {
+          if (eventType === 'node') {
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.summary) updateTypingProgress(data.summary);
+            } catch (_) {}
+          } else if (eventType === 'done') {
+            gotDoneOrError = true;
+            removeTyping();
+            try {
+              const data = JSON.parse(dataStr);
+              threadId = data.thread_id || data.session_id || threadId;
+              appendAgentMessage(data);
+            } catch (e) {
+              appendErrorMessage('Invalid response from server.');
+            }
+          } else if (eventType === 'error') {
+            gotDoneOrError = true;
+            removeTyping();
+            try {
+              const data = JSON.parse(dataStr);
+              appendErrorMessage(data.error || 'An error occurred.');
+            } catch (_) {
+              appendErrorMessage('An error occurred.');
+            }
+          }
+        };
+        await parseSSEStream(reader, onEvent);
+        if (!gotDoneOrError) {
+          removeTyping();
+          appendErrorMessage('No response received from the server. Please try again.');
+        }
       }
     } catch (err) {
       removeTyping();
-      appendErrorMessage('Could not reach the AgentForge server (localhost:8000). Ensure it is running.');
+      appendErrorMessage('Could not reach the AgentForge server. Ensure it is running.');
     } finally {
       // Request completed (success or error) — clear the pending beacon so a
       // normal tab close doesn't duplicate the message.
